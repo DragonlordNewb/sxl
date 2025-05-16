@@ -14,10 +14,19 @@ from sympy import Matrix
 from sympy import Expr
 from sympy import pprint
 from typing import Iterable
+from typing import Callable
+from typing import Any
 from abc import ABC
 from abc import abstractmethod
 from utils import all_index_combos
+from utils import dissolve_metalist
+from utils import empty_value_block
 
+
+class DimensionError(Exception):
+    pass
+
+ED = "[ED] Bad dimensions"
 E0 = lambda v, i: f"[E0] Bad index formation (variances {v}, indices {i})"
 E1 = "[E1] Bad variance"
 E2 = "[E2] Cannot raise/lower an index of the wrong variance"
@@ -31,6 +40,9 @@ E7 = "[E7] Cannot get with a dummy index"
 
 COVARIANT = CO = "d"
 CONTRAVARIANT = CONTRA = "u"
+
+def dim(x: Any) -> int:
+    return x.__dim__()
 
 def variance_to_metaindex(variance: tuple[str]) -> int:
     """
@@ -62,7 +74,7 @@ class CoordinateSystem:
     def __iter__(self) -> Iterable[Symbol]:
         return iter(self.symbols)
 
-    def len(self) -> int:
+    def __dim__(self) -> int:
         return len(self.labels)
 
 class MetricTensor:
@@ -71,6 +83,16 @@ class MetricTensor:
         self.mat = Matrix(values)
         self.mt_dd = values
         self.mt_uu = self.mat.inv.tolist()
+        self.coords = cs
+
+        if len(values) != dim(self):
+            raise DimensionError(ED)
+        for row in values:
+            if len(row) != dim(self):
+                raise DimensionError(ED)
+
+    def __dim__(self) -> int:
+        return dim(self.coords)
 
     def dd(self, i, j):
         return self.mt_dd[i][j]
@@ -89,14 +111,14 @@ class Index:
             self.indices.append(i)
 
         for v, i in self:
-            if v not in (CO, CONTRA) or i < -1 or i >= len(self.metric):
+            if v not in (CO, CONTRA) or i < -1 or i >= dim(self.metric):
                 # Dummy indices of -1 are allowed
                 raise IndexError(E0(self.variances, self.indices))
 
-        self.rank = len(self.indices)
+        self.rank = le(self.indices)
 
-    def __len__(self) -> int:
-        return len(self.metric)
+    def __dim__(self) -> int:
+        return dim(self.metric)
     
     def find_metaindex(self) -> int:
         return self.variance_to_metaindex(self.variances)
@@ -119,7 +141,7 @@ class Index:
     def contracted(self, metaindex: int) -> list["Index"]:
         idxs = []
         idx = self.copy()
-        for i in range(len(self)):
+        for i in range(dim(self)):
             idx.substitute_index(metaindex, i)
             idxs.append(idx.copy())
         return idxs
@@ -133,12 +155,12 @@ class Index:
 
         if len(over_dummies) == 1:
             idx = self.copy()
-            for i in range(len(self)):
+            for i in range(dim(self)):
                 idx.substitute(over_dummies[0], i)
                 r.append(idx.copy())
         else:
             idx = self.copy()
-            for i in range(len(self)):
+            for i in range(dim(self)):
                 idx.substitute(over_dummies[0], i)
                 for nidx in idx.expand(over_dummies[1:]):
                     r.append(nidx)
@@ -148,16 +170,16 @@ class Index:
     def trace_sum(self, mi1: int, mi2: int) -> list[tuple[Expr, "Index"]]:
         idxs = []
         idx = self.copy()
-        for i in range(len(self)):
+        for i in range(dim(self)):
             idx.substitute_index(mi1, i)
             idx.substitute_index(mi2, i)
             idxs.append(idx.copy())
         if self.vaiances[mi1] == self.variances[mi2] == CO:
-            return zip(idxs, [self.metric.uu(i, i) for i in range(len(self))])
+            return zip(idxs, [self.metric.uu(i, i) for i in range(dim(self))])
         elif self.variaces[mi1] == self.variances[mi2] == CONTRA:
-            return zip(idxs, [self.metric.dd(i, i) for i in range(len(self))])
+            return zip(idxs, [self.metric.dd(i, i) for i in range(dim(self))])
         else:
-            return zip(idxs, [1]*len(self))
+            return zip(idxs, [1]*dim(self))
 
     def raise_sum(self, metaindex: int) -> tuple["Index", list[tuple[Expr, "Index"]]]:
         if self.variances[metaindex] == CONTRA:
@@ -195,14 +217,37 @@ class Index:
         for ic in all_index_combos(len(variance), len(m)):
             yield cls(m, zip(variance, ic))
 
+    @classmethod
+    def from_variance_and_indices(cls, m: MetricTensor, variance: list[str], indices: list[int]) -> "Index":
+        return cls(m, *zip(variance, indices))
+
 class TensorSymmetry(ABC):
 
     def __init__(self, *target_indices: list[int]) -> None:
         self.target_indices = target_indices
 
     @abstractmethod
-    def symmetric_components(self, index: Index, value: Expr) -> list[tuple[Index, Expr]]:
-        raise NotImplemented("Subclasses must implement this method.")
+    def symmetric_components(self, index: Index, value: Expr=1.1) -> list[tuple[Index, Expr]]:
+        raise NotImplementedError("Subclasses must implement this method.")
+
+    @abstractmethod
+    def symmetric_indices(self, indices: list[int]) -> list[list[int]]:
+        raise NotImplementedError("Subclasses must implement this method.")
+
+    @staticmethod
+    def generate_independence(self, *symmetries: list["TensorSymmetry"], available: Iterable[list[int]]) -> Iterable[list[int]]:
+        already = []
+        independent = []
+        for indices in available:
+            if indices in already:
+                continue
+            else:
+                independent.append(already)
+                indices.append(already)
+            for symmetry in symmetries:
+                for sym in symmetry.symmetric_indices(indices):
+                    if sym not in already:
+                        already.append(sym)
 
 class Tensor:
 
@@ -210,12 +255,13 @@ class Tensor:
     metric: MetricTensor
     values: list
 
-    def __init__(self, rank: int, *symmetries: list[TensorSymmetry]) -> None:
-        self.values = [None for _ in range(pow(2, rank) - 1)]
+    def __init__(self, m: MetricTensor, rank: int, *symmetries: list[TensorSymmetry]) -> None:
+        sel.metric = m
+        self.values = [empty_value_block(self.rank, dim(self)) for _ in range(pow(2, rank) - 1)]
         self.symmetries = symmetries
 
-    def __len__(self) -> int:
-        return len(self.metric)
+    def __dim__(self) -> int:
+        return dim(self.metric)
 
     def check_symmetries(self, index: Index) -> None:
         val = self.get(index)
@@ -223,6 +269,19 @@ class Tensor:
             syms = sym.symmetric_components(index, val)
             for other_index, other_value in syms:
                 self.set(othe_index, other_value)
+
+    def is_variance_complete(self, variance: list[str]) -> bool:
+        metaindex = variance_to_metaindex(variance)
+        for element in dissolve_metalist(self.values[metaindex]):
+            if element is None:
+                return False
+        return True
+
+    def is_complete(self) -> bool:
+        for element in dissolve_metalist(self.values):
+           if element is None:
+            return False
+        return True
 
     def get(self, index: Index) -> Expr:
         if -1 in index.indices:
@@ -290,3 +349,26 @@ class Tensor:
         """
 
         return sum([self.get(idx) * gmn for idx, gmn in index.trace_sum(mi1, mi2)])
+
+class Tensorial(Tensor):
+
+    defined_variance: list[str]
+
+    @abstractmethod
+    def define(self, *indices):
+        raise NotImplementedError("Subclasses must implement this method")
+
+    def define_all(self):
+        for indices in TensorSymmetry.generate_independence(*self.symmetries, all_index_combos(self.rank, dim(self))):
+            self.set(Index.from_variance_and_indices(self.defined_variance, indices), self.define(indices))
+
+class Manifold:
+
+    def __init__(self, metric: MetricTensor) -> None:
+        self.metric = metric
+        self.fields = {}
+
+    def __dim__(self) -> int:
+        return dim(self.metric)
+
+    def consider(self, )
