@@ -1,3 +1,12 @@
+"""
+I had a semi-working library before, but it was not generalizable enough; it
+was impossible to work with a tensor I hadn't hard-coded, and I couldn't use
+most sets of indices so I couldn't do any of the really cool stuff.
+
+I have added compatibility for tensors of any rank and dimension along with
+any and all indices, at the cost of memory. Good luck.
+"""
+
 from sympy import Symbol
 from sympy import symbols
 from sympy import Function
@@ -7,7 +16,14 @@ from sympy import pprint
 from typing import Iterable
 
 E0 = lambda v, i: f"[E0] Bad index formation (variances {v}, indices {i})"
-E1 = "[E1] Can\'t contract two indices of the same variance (raise first)"
+E1 = "[E1] Bad variance"
+E2 = "[E2] Cannot raise/lower an index of the wrong variance"
+E3A = "[E3A] Bad index rank when getting"
+E3B = "[E3B] Bad index rank while setting"
+E4A = "[E4A] Tensor incomplete/corrupted while getting"
+E4B = "[E4B] Tensor corrupted while setting"
+E5 = "[E5] Cannot trace with indices of different variance (music first)"
+E6 = "[E6] Cannot expand non-dummy index"
 
 COVARIANT = CO = "d"
 CONTRAVARIANT = CONTRA = "u"
@@ -69,14 +85,23 @@ class Index:
             self.indices.append(i)
 
         for v, i in self:
-            if v not in (CO, CONTRA) or i < 0 or i >= len(self.metric):
+            if v not in (CO, CONTRA) or i < -1 or i >= len(self.metric):
+                # Dummy indices of -1 are allowed
                 raise IndexError(E0(self.variances, self.indices))
+
+        self.rank = len(self.indices)
 
     def __len__(self) -> int:
         return len(self.metric)
     
     def find_metaindex(self) -> int:
         return self.variance_to_metaindex(self.variances)
+
+    def get_dummy_metaindices(self) -> int:
+        r = []
+        for mi, i in enumerate(self.indices):
+            if i == -1:
+                r.append(mi)
     
     def copy(self) -> "Index":
         return Index(*self._init)
@@ -87,33 +112,64 @@ class Index:
     def substitute_variance(self, metaindex: int, new_value: str) -> None:
         self.variances[metaindex] = new_value
 
-    def single_contracted(self, metaindex: int) -> list["Index"]:
+    def contracted(self, metaindex: int) -> list["Index"]:
         idxs = []
+        idx = self.copy()
         for i in range(len(self)):
-            idx = self.copy()
             idx.substitute_index(metaindex, i)
-            idxs.append(idx)
+            idxs.append(idx.copy())
         return idxs
 
-    def double_contracted(self, mi1: int, mi2: int) -> list["Index"]:
-        if self.variances[mi1] == self.variances[mi2]:
-            raise IndexError(E1)
-        
-        idxs = []
-        for i in range(len(self)):
+    def expanded(self, *over_dummies: list[int]) -> list["Index"]:
+        for i in over_dummies:
+            if self.indices[i] != -1:
+                raise IndexError(E6)
+
+        r = []
+
+        if len(over_dummies) == 1:
             idx = self.copy()
+            for i in range(len(self)):
+                idx.substitute(over_dummies[0], i)
+                r.append(idx.copy())
+        else:
+            idx = self.copy()
+            for i in range(len(self)):
+                idx.substitute(over_dummies[0], i)
+                for nidx in idx.expand(over_dummies[1:]):
+                    r.append(nidx)
+        
+        return r
+
+    def trace_sum(self, mi1: int, mi2: int) -> list[tuple[Expr, "Index"]]:
+        idxs = []
+        idx = self.copy()
+        for i in range(len(self)):
             idx.substitute_index(mi1, i)
             idx.substitute_index(mi2, i)
-            idxs.append(idx)
-        return idxs
+            idxs.append(idx.copy())
+        if self.vaiances[mi1] == self.variances[mi2] == CO:
+            return zip(idxs, [self.metric.uu(i, i) for i in range(len(self))])
+        elif self.variaces[mi1] == self.variances[mi2] == CONTRA:
+            return zip(idxs, [self.metric.dd(i, i) for i in range(len(self))])
+        else:
+            return zip(idxs, [1]*len(self))
 
-    def raise_sum(self, metaindex: int) -> list[tuple[Expr, "Index"]]:
+    def raise_sum(self, metaindex: int) -> tuple["Index", list[tuple[Expr, "Index"]]]:
+        if self.variances[metaindex] == CONTRA:
+            raise IndexError(E2)
         r = self.indices[metaindex]
-        return zip(self.single_contracted(metaindex), [self.metric.uu(r, i) for i in range(len(self))])
+        nidx = self.copy()
+        nidx.substitute_variance(metaindex, CONTRA)
+        return nidx, zip(self.contracted(metaindex), [self.metric.uu(r, i) for i in range(len(self))])
 
     def lower_sum(self, metaindex):
+        if self.variances[metaindex] == CO:
+            raise IndexError(E2)
         r = self.indices[metaindex]
-        return zip(self.single_contracted(metaindex), [self.metric.dd(r, i) for i in range(len(self))])
+        nidx = self.copy()
+        nidx.substitute_variance(metaindex, CO)
+        return nidx, zip(self.contracted(metaindex), [self.metric.dd(r, i) for i in range(len(self))])
 
     @classmethod
     def co(cls, m: MetricTensor, *indices) -> "Index":
@@ -139,31 +195,70 @@ class Tensor:
     def __init__(self, rank: int) -> None:
         self.values = [None for _ in range(pow(2, rank) - 1)]
 
-    def get(self, variance: tuple[str], *indices: list[int]) -> Expr:
-        if len(indices) != self.rank:
-            raise IndexError(E2(self.rank, len(indices)))
-        tn = self.values[variance_to_metaindex(variance)]
+    def get(self, index: Index) -> Expr:
+        if -1 in index.indices:
+
+
+        if index.rank != self.rank:
+            raise IndexError(E3A)
         
-        ...
+        mi = index.find_metaindex()
+        tsr = values[mi]
+        for i in index.indices:
+            if tsr is None:
+                raise IndexError(E4A)
+            tsr = tsr[i]
+        return tsr # Should be it!
 
-        return tn
+    def set(self, index: Index, val: Expr) -> None:
+        if index.rank != self.rank:
+            raise IndexError(E3B)
 
-    def set(self, variance: tuple[str], val: Expr, *indices: list[int]) -> None:
-        if len(indices) != self.rank:
-            raise IndexError(E4(self.rank, len(indices)))
-        tn = self.values[variance_to_metaindex(variance)]
-        
-        ...
+        mi = index.find_metaindex()
+        tsr = values[mi]
+        for i in index.indices[:-1]:
+            if tsr is None:
+                raise IndexError(E4B)
+            tsr = tsr[i]
 
-        tn[indices[-1]] = val
+        tsr[indices[-1]] = val
 
-    def raise_index(self, mi: int, v: tuple[str], *indices: list[int],) -> Expr:
+    def raise_index(self, index: Index, mi: int) -> Expr:
         """
         Given the tensor with that variance, raise the index located at the
         metaindex. For example, on a rank-3 tensor T,
 
-            T.raise_index(0, (CO, CO, CO), 1, 2, 3)
+            T.raise_index(Index(m, (CO, 0), (CO, 1), (CO, 2)), 0)
 
-        yields T^1_{23} from T_{123}.
+        yields T^0_{12} from T_{012}.
         """
+
+        nidx, s = index.raise_sum(mi)
+        val = sum([self.get(idx) * gmn for idx, gmn in s])
+        self.set(nidx, val)
+        return val
+
+    def lower_index(self, index: Index, mi: int) -> Expr:
+        """
+        Same as raise_index, but lowers instead.
+        """
+
+        nidx, s = index.lower_sum(mi)
+        val = sum([self.get(idx) * gmn for idx, gmn in s])
+        self.set(nidx, val)
+        return val
+
+    def trace(self, index: Index, mi1: int, mi2: int) -> Expr:
+        """
+        Compute the trace of two given indices. For example, on a rank-4
+        tensor (e.g. the Riemann tensor),
+
+            T.trace(Index.co(m, -1, 0, -1, 1), 0, 2)
+
+        runs a trace over the first and third indices. (if this were the
+        Riemann tensor, it would give R_{01}). Works on indices of any
+        variance.
+        """
+
+        return sum([self.get(idx) * gmn for idx, gmn in index.trace_sum(mi1, mi2)])
 
