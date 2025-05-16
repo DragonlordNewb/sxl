@@ -184,7 +184,11 @@ class Index:
         j = [(CONTRA, indices[0])]
         for k in indices[1:]:
             j.append((CO, k))
-        return cls(m, *j) 
+        return cls(m, *j)
+
+    @classmethod
+    def all(cls, m: MetricTensor, *variance) -> list["Index"]:
+        
 
 class Tensor:
 
@@ -194,6 +198,9 @@ class Tensor:
 
     def __init__(self, rank: int) -> None:
         self.values = [None for _ in range(pow(2, rank) - 1)]
+
+    def __len__(self) -> int:
+        return len(self.metric)
 
     def get(self, index: Index) -> Expr:
         if -1 in index.indices:
@@ -261,4 +268,3 @@ class Tensor:
         """
 
         return sum([self.get(idx) * gmn for idx, gmn in index.trace_sum(mi1, mi2)])
-
