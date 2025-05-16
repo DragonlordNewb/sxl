@@ -14,6 +14,9 @@ from sympy import Matrix
 from sympy import Expr
 from sympy import pprint
 from typing import Iterable
+from abc import ABC
+from abc import abstractmethod
+from utils import all_index_combos
 
 E0 = lambda v, i: f"[E0] Bad index formation (variances {v}, indices {i})"
 E1 = "[E1] Bad variance"
@@ -188,7 +191,17 @@ class Index:
 
     @classmethod
     def all(cls, m: MetricTensor, *variance) -> list["Index"]:
-        
+        for ic in all_index_combos(len(variance), len(m)):
+            yield cls(m, zip(variance, ic))
+
+class TensorSymmetry(ABC):
+
+    def __init__(self, *target_indices: list[int]) -> None:
+        self.target_indices = target_indices
+
+    @abstractmethod
+    def symmetric_components(self, index: Index, value: Expr) -> list[tuple[Index, Expr]]:
+        raise NotImplemented("Subclasses must implement this method.")
 
 class Tensor:
 
