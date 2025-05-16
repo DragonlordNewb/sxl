@@ -119,8 +119,6 @@ class MetricTensor:
         self.mt_uu = self.mat.inv().tolist()
         self.coords = cs
 
-        self.connection_coefficients_udd = [[[None for i in range(dim(self))] for j in range(dim(self))] for k in range(dim(self))]
-
         if len(values) != dim(self):
             raise DimensionError(ED)
         for row in values:
@@ -136,8 +134,18 @@ class MetricTensor:
     def metric_contra(self, i: int, j: int) -> Expr:
         return self.mt_uu[i][j]
     
-    def connection_mixed(self, i: int, j: int, k: int) -> Expr:
-        return self.connection_coefficients_udd[i][j][k]
+class ConnectionCoefficients:
+
+    def __init__(self, m: MetricTensor) -> None:
+        self.metric = m
+        self.ddd = [[[None for i in range(dim(self))] for j in range(dim(self))] for k in range(dim(self))]
+        self.udd = [[[None for i in range(dim(self))] for j in range(dim(self))] for k in range(dim(self))]
+        self.proca = [None for i in range(dim(self))]
+
+    def __dim__(self) -> int:
+        return dim(self.metric)
+    
+    def compute()
 
 class Index:
 
