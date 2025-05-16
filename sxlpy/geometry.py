@@ -19,9 +19,9 @@ from typing import Any
 from typing import Union
 from abc import ABC
 from abc import abstractmethod
-from utils import all_index_combos
-from utils import dissolve_metalist
-from utils import empty_value_block
+from sxlpy.utils import all_index_combos
+from sxlpy.utils import dissolve_metalist
+from sxlpy.utils import empty_value_block
 
 
 class DimensionError(Exception):
@@ -77,14 +77,49 @@ class CoordinateSystem:
 
     def __dim__(self) -> int:
         return len(self.labels)
+    
+    def to_symbol(self, i) -> Symbol:
+        if type(i) == int:
+            return self.symbols[i]
+        elif type(i) == str:
+            for s in self.symbols:
+                if s.name == i:
+                    return s
+        elif i == -1:
+            return "."
+        return i
+    
+    def to_label(self, i) -> str:
+        if type(i) == int:
+            return self.labels[i]
+        elif type(i) == Symbol:
+            return i.name
+        elif i == -1:
+            return "."
+        return i
+    
+    def to_number(self, i) -> int:
+        if type(i) == str:
+            for j, l in enumerate(self.labels):
+                if l == i:
+                    return j
+        elif type(i) == Symbol:
+            for j, s in enumerate(self.symbols):
+                if s == i:
+                    return j
+        elif i == -1:
+            return "."
+        return i
 
 class MetricTensor:
 
     def __init__(self, values: list[list[Expr]], cs: CoordinateSystem) -> None:
         self.mat = Matrix(values)
         self.mt_dd = values
-        self.mt_uu = self.mat.inv.tolist()
+        self.mt_uu = self.mat.inv().tolist()
         self.coords = cs
+
+        self.connection_coefficients_udd = [[[None for i in range(dim(self))] for j in range(dim(self))] for k in range(dim(self))]
 
         if len(values) != dim(self):
             raise DimensionError(ED)
@@ -95,18 +130,22 @@ class MetricTensor:
     def __dim__(self) -> int:
         return dim(self.coords)
 
-    def dd(self, i, j):
+    def metric_co(self, i: int, j: int) -> Expr:
         return self.mt_dd[i][j]
 
-    def uu(self, i, j):
+    def metric_contra(self, i: int, j: int) -> Expr:
         return self.mt_uu[i][j]
+    
+    def connection_mixed(self, i: int, j: int, k: int) -> Expr:
+        return self.connection_coefficients_udd[i][j][k]
 
 class Index:
 
     def __init__(self, m: MetricTensor, *indices: list[tuple[str, int]]) -> None:
         self._init = (m, *indices)
         self.metric = m
-        self.variances = self.indices = []
+        self.variances = []
+        self.indices = []
         for v, i in indices:
             self.variances.append(v)
             self.indices.append(i)
@@ -116,11 +155,50 @@ class Index:
                 # Dummy indices of -1 are allowed
                 raise IndexError(E0(self.variances, self.indices))
 
-        self.rank = le(self.indices)
+        self.rank = len(self.indices)
 
     def __dim__(self) -> int:
         return dim(self.metric)
     
+    def __iter__(self) -> Iterable[tuple[str, int]]:
+        return zip(self.variances, self.indices)
+
+    def _string_with(self, x: str) -> str:
+        r = x
+        flag = None
+        rg = {CO: "_{", CONTRA: "^{"}
+        for variance, index in self:
+            if flag is None:
+                flag = variance
+                r = r + rg[variance] + self.metric.coords.to_label(index)
+            else:
+                if flag != variance:
+                    flag = variance
+                    r = "{" + r + "}}" + rg[variance]
+                r = r + self.metric.coords.to_label(index)
+        return r + "}"
+
+    def _simple_string_with(self, x: str) -> str:
+        r = x
+        flag = None
+        rg = {CO: "_", CONTRA: "^"}
+        for variance, index in self:
+            if flag is None:
+                flag = variance
+                r = r + rg[variance] + self.metric.coords.to_label(index)
+            else:
+                if flag != variance:
+                    flag = variance
+                    r = r + rg[variance]
+                r = r + self.metric.coords.to_label(index)
+        return r
+    
+    def __str__(self):
+        return self._simple_string_with("")
+    
+    def __repr__(self):
+        return "<Index: " + self._simple_string_with("") + ">"
+
     def find_metaindex(self) -> int:
         return self.variance_to_metaindex(self.variances)
 
@@ -176,9 +254,9 @@ class Index:
             idx.substitute_index(mi2, i)
             idxs.append(idx.copy())
         if self.vaiances[mi1] == self.variances[mi2] == CO:
-            return zip(idxs, [self.metric.uu(i, i) for i in range(dim(self))])
+            return zip(idxs, [self.metric.metric_contra(i, i) for i in range(dim(self))])
         elif self.variaces[mi1] == self.variances[mi2] == CONTRA:
-            return zip(idxs, [self.metric.dd(i, i) for i in range(dim(self))])
+            return zip(idxs, [self.metric.metric_co(i, i) for i in range(dim(self))])
         else:
             return zip(idxs, [1]*dim(self))
 
@@ -188,7 +266,7 @@ class Index:
         r = self.indices[metaindex]
         nidx = self.copy()
         nidx.substitute_variance(metaindex, CONTRA)
-        return nidx, zip(self.contracted(metaindex), [self.metric.uu(r, i) for i in range(len(self))])
+        return nidx, zip(self.contracted(metaindex), [self.metric.metric_contra(r, i) for i in range(len(self))])
 
     def lower_sum(self, metaindex):
         if self.variances[metaindex] == CO:
@@ -196,7 +274,7 @@ class Index:
         r = self.indices[metaindex]
         nidx = self.copy()
         nidx.substitute_variance(metaindex, CO)
-        return nidx, zip(self.contracted(metaindex), [self.metric.dd(r, i) for i in range(len(self))])
+        return nidx, zip(self.contracted(metaindex), [self.metric.metric_co(r, i) for i in range(len(self))])
 
     @classmethod
     def co(cls, m: MetricTensor, *indices) -> "Index":
@@ -257,7 +335,7 @@ class Tensor:
     values: list
 
     def __init__(self, m: MetricTensor, rank: int, *symmetries: list[TensorSymmetry]) -> None:
-        sel.metric = m
+        self.metric = m
         self.values = [empty_value_block(self.rank, dim(self)) for _ in range(pow(2, rank) - 1)]
         self.symmetries = symmetries
 
@@ -269,7 +347,7 @@ class Tensor:
         for sym in self.symmetries:
             syms = sym.symmetric_components(index, val)
             for other_index, other_value in syms:
-                self.set(othe_index, other_value)
+                self.set(other_index, other_value)
 
     def is_variance_complete(self, variance: list[str]) -> bool:
         metaindex = variance_to_metaindex(variance)
@@ -292,7 +370,7 @@ class Tensor:
             raise IndexError(E3A)
         
         mi = index.find_metaindex()
-        tsr = values[mi]
+        tsr = self.values[mi]
         for i in index.indices:
             if tsr is None:
                 raise IndexError(E4A)
@@ -304,13 +382,13 @@ class Tensor:
             raise IndexError(E3B)
 
         mi = index.find_metaindex()
-        tsr = values[mi]
+        tsr = self.values[mi]
         for i in index.indices[:-1]:
             if tsr is None:
                 raise IndexError(E4B)
             tsr = tsr[i]
 
-        tsr[indices[-1]] = val
+        tsr[index.indices[-1]] = val
 
     def raise_index(self, index: Index, mi: int) -> Expr:
         """
@@ -357,12 +435,12 @@ class Tensorial(Tensor):
     defined_variance: list[str]
 
     @abstractmethod
-    def define(self, *indices):
+    def define(self, mf: "Manifold", *indices):
         raise NotImplementedError("Subclasses must implement this method")
 
-    def define_all(self):
+    def define_all(self, mf: "Manifold"):
         for indices in TensorSymmetry.generate_independence(*self.symmetries, all_index_combos(self.rank, dim(self))):
-            self.set(Index.from_variance_and_indices(self.defined_variance, indices), self.define(indices))
+            self.set(Index.from_variance_and_indices(self.defined_variance, indices), self.define(indices, mf))
 
 class Manifold:
 
@@ -384,7 +462,7 @@ class Manifold:
 
     def define_field(self, tsrl: Tensorial) -> None:
         self.consider_field(tsrl)
-        self.get_field(tsrl.name).define_all()
+        self.get_field(tsrl.name).define_all(self)
 
     def get_field(self, name: str) -> Tensorial:
         for tsrl in self.tensorials:
