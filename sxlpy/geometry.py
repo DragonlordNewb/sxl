@@ -16,6 +16,7 @@ from sympy import pprint
 from typing import Iterable
 from typing import Callable
 from typing import Any
+from typing import Union
 from abc import ABC
 from abc import abstractmethod
 from utils import all_index_combos
@@ -352,6 +353,7 @@ class Tensor:
 
 class Tensorial(Tensor):
 
+    name: str
     defined_variance: list[str]
 
     @abstractmethod
@@ -366,9 +368,26 @@ class Manifold:
 
     def __init__(self, metric: MetricTensor) -> None:
         self.metric = metric
-        self.fields = {}
+        self.tensorials = []
+        self.tensors = []
 
     def __dim__(self) -> int:
         return dim(self.metric)
 
-    def consider(self, )
+    def consider_field(self, tsrl: Union[Tensorial, Tensor]) -> None:
+        if type(tsrl) == Tensorial:
+            self.tensorials.append(tsrl)
+        elif type(tsrl) == Tensor:
+            self.tensors.append(tsrl)
+        else:
+            raise TypeError
+
+    def define_field(self, tsrl: Tensorial) -> None:
+        self.consider_field(tsrl)
+        self.get_field(tsrl.name).define_all()
+
+    def get_field(self, name: str) -> Tensorial:
+        for tsrl in self.tensorials:
+            if tsrl.name == name:
+                return tsrl
+        raise NameError
