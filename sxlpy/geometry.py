@@ -27,6 +27,7 @@ E4A = "[E4A] Tensor incomplete/corrupted while getting"
 E4B = "[E4B] Tensor corrupted while setting"
 E5 = "[E5] Cannot trace with indices of different variance (music first)"
 E6 = "[E6] Cannot expand non-dummy index"
+E7 = "[E7] Cannot get with a dummy index"
 
 COVARIANT = CO = "d"
 CONTRAVARIANT = CONTRA = "u"
@@ -209,15 +210,23 @@ class Tensor:
     metric: MetricTensor
     values: list
 
-    def __init__(self, rank: int) -> None:
+    def __init__(self, rank: int, *symmetries: list[TensorSymmetry]) -> None:
         self.values = [None for _ in range(pow(2, rank) - 1)]
+        self.symmetries = symmetries
 
     def __len__(self) -> int:
         return len(self.metric)
 
+    def check_symmetries(self, index: Index) -> None:
+        val = self.get(index)
+        for sym in self.symmetries:
+            syms = sym.symmetric_components(index, val)
+            for other_index, other_value in syms:
+                self.set(othe_index, other_value)
+
     def get(self, index: Index) -> Expr:
         if -1 in index.indices:
-
+            raise IndexError(E7)
 
         if index.rank != self.rank:
             raise IndexError(E3A)
