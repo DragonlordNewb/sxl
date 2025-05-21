@@ -50,7 +50,7 @@ class Progress:
         filled_count = floor(current * self.length / self.total)
         unfilled_count = self.length - filled_count
         percent = str(current * 100 / self.total)[:5] + "%"
-        return "[SXL] " + self.desc + " <" + ("#"*filled_count) + ("-"*unfilled_count) + "> " + percent
+        return "[SXL] ... " + self.desc + " <" + ("#"*filled_count) + ("-"*unfilled_count) + "> " + percent
 
     def __enter__(self) -> None:
         self.current = -1
@@ -62,4 +62,4 @@ class Progress:
         print(self._bar(), end="\r")
 
     def __exit__(self, *_):
-        pass
+        print("[SXL] !!! ")

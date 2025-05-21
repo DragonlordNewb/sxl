@@ -22,6 +22,8 @@ from abc import abstractmethod
 from sxlpy.utils import all_index_combos
 from sxlpy.utils import dissolve_metalist
 from sxlpy.utils import empty_value_block
+from sxlpy.utils import symmetric_with_diag
+from sxlpy.utils import Progress
 
 
 class DimensionError(Exception):
@@ -77,6 +79,9 @@ class CoordinateSystem:
 
     def __dim__(self) -> int:
         return len(self.labels)
+
+    def x(self, i) -> Symbol:
+        return self.to_symbol(i)
     
     def to_symbol(self, i) -> Symbol:
         if type(i) == int:
@@ -127,14 +132,37 @@ class MetricTensor:
             if len(row) != dim(self):
                 raise DimensionError(ED)
 
+        self.compute_connection_coefficients()
+
     def __dim__(self) -> int:
         return dim(self.coords)
+
+    def compute_connection_coefficients(self) -> None:
+        d = dim(self)
+        total = (d**2)*(d+1)/2
+        with Progress("Computing covariant connection coefficients", total) as pb:
+            for i in range(d):
+                for j, k in symmetric_with_diag(d):
+                    self.conn_ddd[i][j][k] = (self.metric_co(i, j).diff(k) + self.metric_co(i, k).diff(j) + self.metric_co(k, j).diff(i))/2
+                    pb.done()
+        with Progress("Computing mixed-index connection coefficients", total) as pb:
+            for i in range(d):
+                for j, k in symmetric_with_diag(d):
+                    self.conn_udd[i][j][k] = sum(self.metric_contra(i, d) * self.conn_ddd[d][j][k] for l in range(d))
+                    pb.done()
+        return None
 
     def metric_co(self, i: int, j: int) -> Expr:
         return self.mt_dd[i][j]
 
     def metric_contra(self, i: int, j: int) -> Expr:
         return self.mt_uu[i][j]
+
+    def conn_co(self, i, j, k) -> Expr:
+        return self.conn_ddd[i][j][k]
+
+    def conn_mixed(self, i, j, k) -> Expr:
+        return self.conn_udd[i][j][k]
 
 class Index:
 
@@ -309,13 +337,22 @@ class TensorSymmetry(ABC):
     def symmetric_indices(self, index: Index) -> list[tuple[int, int, ...]]:
         return [index.indices for index, _ in self.symmetric_components(index)]
 
+    @staticmethod
+    def generate_independent_components(available: list[Index], *symmetries) -> Iterable[Index]:
+        
+
 class Tensor:
 
     rank: int
     metric: MetricTensor
     values: list
 
-    def __init__(self, m: MetricTensor, rank: int, name: str, definition: Callable[[Index, "Manifold"], Expr], *symmetries: list[TensorSymmetry]) -> None:
+    def __init__(self, 
+                    m: MetricTensor, 
+                    rank: int, 
+                    *symmetries: list[TensorSymmetry], 
+                    name: str, 
+                    definition: Callable[[Index, "Manifold"], Expr]) -> None:
         self.name = name
         self.metric = m
         self.values = [empty_value_block(self.rank, dim(self)) for _ in range(pow(2, rank))]
@@ -420,6 +457,9 @@ class Manifold:
 
     def __dim__(self) -> int:
         return dim(self.metric)
+
+    def x(self, i) -> Symbol:
+        return self.metric.coords.x(i)
 
     def consider_field(self, tsr: Tensor) -> None:
         self.tensors.append(tsr)
