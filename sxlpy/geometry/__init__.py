@@ -117,6 +117,8 @@ class MetricTensor:
         self.mat = Matrix(values)
         self.mt_dd = values
         self.mt_uu = self.mat.inv().tolist()
+        self.conn_ddd = empty_value_block(3, dim(self))
+        self.conn_udd = empty_value_block(3, dim(self))
         self.coords = cs
 
         if len(values) != dim(self):
@@ -133,19 +135,6 @@ class MetricTensor:
 
     def metric_contra(self, i: int, j: int) -> Expr:
         return self.mt_uu[i][j]
-    
-class ConnectionCoefficients:
-
-    def __init__(self, m: MetricTensor) -> None:
-        self.metric = m
-        self.ddd = [[[None for i in range(dim(self))] for j in range(dim(self))] for k in range(dim(self))]
-        self.udd = [[[None for i in range(dim(self))] for j in range(dim(self))] for k in range(dim(self))]
-        self.proca = [None for i in range(dim(self))]
-
-    def __dim__(self) -> int:
-        return dim(self.metric)
-    
-    def compute()
 
 class Index:
 
@@ -310,31 +299,15 @@ class Index:
 
 class TensorSymmetry(ABC):
 
-    def __init__(self, *target_indices: list[int]) -> None:
-        self.target_indices = target_indices
+    def __init__(self, *target_metaindices: list[int]) -> None:
+        self.target_metaindices = target_metaindices
 
     @abstractmethod
     def symmetric_components(self, index: Index, value: Expr=1.1) -> list[tuple[Index, Expr]]:
         raise NotImplementedError("Subclasses must implement this method.")
 
-    @abstractmethod
-    def symmetric_indices(self, indices: list[int]) -> list[list[int]]:
-        raise NotImplementedError("Subclasses must implement this method.")
-
-    @staticmethod
-    def generate_independence(self, *symmetries: list["TensorSymmetry"], available: Iterable[list[int]]) -> Iterable[list[int]]:
-        already = []
-        independent = []
-        for indices in available:
-            if indices in already:
-                continue
-            else:
-                independent.append(already)
-                indices.append(already)
-            for symmetry in symmetries:
-                for sym in symmetry.symmetric_indices(indices):
-                    if sym not in already:
-                        already.append(sym)
+    def symmetric_indices(self, index: Index) -> list[tuple[int, int, ...]]:
+        return [index.indices for index, _ in self.symmetric_components(index)]
 
 class Tensor:
 
@@ -342,10 +315,12 @@ class Tensor:
     metric: MetricTensor
     values: list
 
-    def __init__(self, m: MetricTensor, rank: int, *symmetries: list[TensorSymmetry]) -> None:
+    def __init__(self, m: MetricTensor, rank: int, name: str, definition: Callable[[Index, "Manifold"], Expr], *symmetries: list[TensorSymmetry]) -> None:
+        self.name = name
         self.metric = m
-        self.values = [empty_value_block(self.rank, dim(self)) for _ in range(pow(2, rank) - 1)]
+        self.values = [empty_value_block(self.rank, dim(self)) for _ in range(pow(2, rank))]
         self.symmetries = symmetries
+        self.definition = definition
 
     def __dim__(self) -> int:
         return dim(self.metric)
@@ -437,40 +412,17 @@ class Tensor:
 
         return sum([self.get(idx) * gmn for idx, gmn in index.trace_sum(mi1, mi2)])
 
-class Tensorial(Tensor):
-
-    name: str
-    defined_variance: list[str]
-
-    @abstractmethod
-    def define(self, mf: "Manifold", *indices):
-        raise NotImplementedError("Subclasses must implement this method")
-
-    def define_all(self, mf: "Manifold"):
-        for indices in TensorSymmetry.generate_independence(*self.symmetries, all_index_combos(self.rank, dim(self))):
-            self.set(Index.from_variance_and_indices(self.defined_variance, indices), self.define(indices, mf))
-
 class Manifold:
 
     def __init__(self, metric: MetricTensor) -> None:
         self.metric = metric
-        self.tensorials = []
         self.tensors = []
 
     def __dim__(self) -> int:
         return dim(self.metric)
 
-    def consider_field(self, tsrl: Union[Tensorial, Tensor]) -> None:
-        if type(tsrl) == Tensorial:
-            self.tensorials.append(tsrl)
-        elif type(tsrl) == Tensor:
-            self.tensors.append(tsrl)
-        else:
-            raise TypeError
-
-    def define_field(self, tsrl: Tensorial) -> None:
-        self.consider_field(tsrl)
-        self.get_field(tsrl.name).define_all(self)
+    def consider_field(self, tsr: Tensor) -> None:
+        self.tensors.append(tsr)
 
     def get_field(self, name: str) -> Tensorial:
         for tsrl in self.tensorials:
