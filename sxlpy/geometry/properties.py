@@ -3,6 +3,7 @@ from abc import abstractmethod
 from typing import Iterable
 from typing import Callable
 from typing import Union
+from itertools import permutations
 from sxlpy.geometry import Index
 from sxlpy.geometry import Tensor
 
@@ -36,25 +37,17 @@ class TensorSymmetry(TensorProperty):
     def symmetric_components(self, index: Index) -> Iterable[tuple[Index, int]]:
         raise NotImplementedError("Subclasses must implement this method.")
 
-    def independent_components(self, tensor: Tensor) -> list[Index]:
+    @staticmethod
+    def independent_components(tensor: Tensor, *symmetries: list["TensorSymmetry"]) -> list[Index]:
         already = []
         for index in Index.all(tensor.metric, self.variance):
             if index not in already:
                 yield index
                 already.append(index)
-                for sindex, _ in self.symmetric_components(index):
-                    already.append(sindex)
-    
-    def independent_nonzero_components(self, tensor: Tensor, *zeros: TensorZeros) -> list[Index]:
-        flag = False
-        for iindex in self.independent_components(tensor):
-            flag = False
-            for zero in zeros:
-                if zero.condition(index):
-                    flag = True
-                    break
-            if not flag:
-                yield iindex
+                for symmetry in symmetries:
+                    for sindex, _ in self.symmetric_components(index):
+                        if sindex not in already:
+                            already.append(sindex)
                     
     def update(self, tensor: Tensor) -> None:
         for index in Index.all(tensor.metric, self.variance):
@@ -74,3 +67,25 @@ class TensorProperties(TensorProperty):
     def update(self, tensor: Tensor) -> None:
         for prop in self:
             prop.update(tensor)
+
+# ===== Implementations ===== #
+            
+class InterchangeSymmetry(TensorSymmetry):
+
+    def symmetric_components(self, index: Index) -> list[tuple[Index, int]]:
+        if index.variance == self.variance:
+            for p in permutations(self.targets, len(self.targets)):
+                idx = index.copy()
+                for i, j in enumerate(p):
+                    idx.indices[self.targets[i]] = index.indices[j]
+                yield idx, 1
+
+class InterchangeAntisymmetry(TensorSymmetry):
+
+    def symmetric_components(self, index: Index) -> list[tuple[Index, int]]:
+        if index.variance == self.variance:
+            for p in permutations(self.targets, len(self.targets)):
+                idx = index.copy()
+                for i, j in enumerate(p):
+                    idx.indices[self.targets[i]] = index.indices[j]
+                yield idx, -1
