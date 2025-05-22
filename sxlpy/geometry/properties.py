@@ -38,20 +38,39 @@ class TensorSymmetry(TensorProperty):
 
     def independent_components(self, tensor: Tensor) -> list[Index]:
         already = []
-        independent = []
         for index in Index.all(tensor.metric, self.variance):
             if index not in already:
-                independent.append(index)
+                yield index
                 already.append(index)
                 for sindex, _ in self.symmetric_components(index):
                     already.append(sindex)
-        return independent
     
-    def independent_nonzero_component(self, tensor: Tensor, *zeros: TensorZeros) -> list[Index]:
-    
+    def independent_nonzero_components(self, tensor: Tensor, *zeros: TensorZeros) -> list[Index]:
+        flag = False
+        for iindex in self.independent_components(tensor):
+            flag = False
+            for zero in zeros:
+                if zero.condition(index):
+                    flag = True
+                    break
+            if not flag:
+                yield iindex
+                    
     def update(self, tensor: Tensor) -> None:
         for index in Index.all(tensor.metric, self.variance):
             val = tensor.get(index)
             if val is not None:
                 for sindex, factor in self.symmetric_components(index):
                     tensor.set(sindex, val * factor)
+
+class TensorProperties(TensorProperty):
+
+    def __init__(self, *props: list[TensorProperty]) -> None:
+        self.props = props
+
+    def __iter__(self) -> Iterable[TensorProperty]:
+        return iter(self.props)
+
+    def update(self, tensor: Tensor) -> None:
+        for prop in self:
+            prop.update(tensor)
